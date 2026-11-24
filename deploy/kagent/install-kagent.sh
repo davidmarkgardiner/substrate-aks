@@ -16,6 +16,12 @@ NS="${KAGENT_NAMESPACE:-kagent}"
 GLM_BASE_URL="${GLM_BASE_URL:-https://api.z.ai/api/anthropic}"
 GLM_MODEL="${GLM_MODEL:-GLM-5}"
 AGENT="${AGENT_NAME:-substrate-hello}"
+# Air-gap mode: set AIRGAP_REGISTRY (e.g. myacr.azurecr.io) and ASSETS_DIR (holding
+# kagent-crds-<v>.tgz, kagent-<v>.tgz and kagent-setup.sql). Every image is then
+# pulled from AIRGAP_REGISTRY under its upstream repository path, and nothing is
+# fetched from the Internet. Mirror images with seed-kagent-airgap.sh first.
+REGISTRY="${AIRGAP_REGISTRY:-}"
+ASSETS_DIR="${ASSETS_DIR:-}"
 : "${GLM_API_KEY:?set GLM_API_KEY}"
 
 log() { printf '\n==> %s\n' "$*"; }
@@ -61,9 +67,11 @@ if ! kubectl -n "$NS" get secret kagent-postgres-owner >/dev/null 2>&1; then
   PW_ADMIN=$(openssl rand -hex 12); PW_OWN=$(openssl rand -hex 12); PW_RW=$(openssl rand -hex 12)
   kubectl -n "$NS" create secret generic kagent-pg-admin --from-literal=password="$PW_ADMIN" \
     --dry-run=client -o yaml | kubectl apply -f -
-  kubectl apply -n "$NS" -f "$(dirname "$0")/postgres.yaml"
+  PG_IMAGE="postgres:17-alpine"; [ -n "$REGISTRY" ] && PG_IMAGE="$REGISTRY/library/postgres:17-alpine"
+  sed "s#image: postgres:17-alpine#image: $PG_IMAGE#" "$(dirname "$0")/postgres.yaml" | kubectl apply -n "$NS" -f -
   kubectl -n "$NS" rollout status deploy/kagent-pg --timeout=300s
-  curl -fsSL "https://raw.githubusercontent.com/kagent-dev/kagent/v$KAGENT_VERSION/go/core/pkg/postgressetup/setup.sql" -o /tmp/kagent-setup.sql
+  if [ -n "$ASSETS_DIR" ]; then cp "$ASSETS_DIR/kagent-setup.sql" /tmp/kagent-setup.sql
+  else curl -fsSL "https://raw.githubusercontent.com/kagent-dev/kagent/v$KAGENT_VERSION/go/core/pkg/postgressetup/setup.sql" -o /tmp/kagent-setup.sql; fi
   kubectl -n "$NS" cp /tmp/kagent-setup.sql "$(kubectl -n "$NS" get pod -l app=kagent-pg -o name | head -1 | cut -d/ -f2)":/tmp/setup.sql
   kubectl -n "$NS" exec deploy/kagent-pg -- psql -U postgres -d kagent --no-psqlrc --set=ON_ERROR_STOP=1 --single-transaction \
     --set=kagent_schema=kagent --set=kagent_owner_role=kagent_owner --set=kagent_owner_user=kagent_owner_user \
@@ -82,8 +90,17 @@ kubectl -n "$NS" create secret generic kagent-glm --from-literal=ANTHROPIC_API_K
 log "kagent $KAGENT_VERSION (microvm WorkerPool)"
 WORKER_IMAGE=$(kubectl get workerpools -A -o jsonpath='{.items[?(@.spec.sandboxClasses[0].name=="microvm")].spec.workerImage}' | awk '{print $1}')
 [ -n "$WORKER_IMAGE" ] || { echo "no microvm workerImage found; install substrate-aks with --with-demo" >&2; exit 1; }
-helm upgrade --install kagent-crds oci://ghcr.io/kagent-dev/kagent/helm/kagent-crds --version "$KAGENT_VERSION" -n "$NS"
-helm upgrade --install kagent oci://ghcr.io/kagent-dev/kagent/helm/kagent --version "$KAGENT_VERSION" -n "$NS" \
+CRDS_CHART="oci://ghcr.io/kagent-dev/kagent/helm/kagent-crds --version $KAGENT_VERSION"
+KAGENT_CHART="oci://ghcr.io/kagent-dev/kagent/helm/kagent --version $KAGENT_VERSION"
+EXTRA=()
+if [ -n "$ASSETS_DIR" ]; then
+  CRDS_CHART="$ASSETS_DIR/kagent-crds-$KAGENT_VERSION.tgz"; KAGENT_CHART="$ASSETS_DIR/kagent-$KAGENT_VERSION.tgz"
+  EXTRA+=(--set global.imageRegistry="$REGISTRY")
+fi
+# shellcheck disable=SC2086
+helm upgrade --install kagent-crds $CRDS_CHART -n "$NS"
+# shellcheck disable=SC2086
+helm upgrade --install kagent $KAGENT_CHART -n "$NS" "${EXTRA[@]}" \
   --set providers.default=openAI --set providers.openAI.apiKey=unused \
   --set controller.substrateClientCertificate.enabled=true \
   --set substrateWorkerPool.create=true --set substrateWorkerPool.sandboxClass=microvm \
