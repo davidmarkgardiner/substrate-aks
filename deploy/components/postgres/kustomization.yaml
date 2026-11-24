@@ -9,3 +9,9 @@ patches:
     kind: StatefulSet
     name: postgres
     namespace: ate-system
+{{- if .PostgresImageName}}
+images:
+- name: postgres
+  newName: {{.PostgresImageName}}
+  digest: {{.PostgresImageDigest}}
+{{- end}}

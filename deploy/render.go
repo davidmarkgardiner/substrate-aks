@@ -7,7 +7,9 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"os"
 	"path"
+	"strings"
 	"text/template"
 
 	"sigs.k8s.io/kustomize/api/filters/patchjson6902"
@@ -58,6 +60,11 @@ type Values struct {
 	CredentialConfigExists bool
 	// NodeSelectorExists reports whether demo input already has a nodeSelector.
 	NodeSelectorExists bool
+	// PostgresImageName and PostgresImageDigest redirect the bundled PostgreSQL
+	// image to an internal registry. Set from SUBSTRATE_AKS_POSTGRES_IMAGE
+	// (name@sha256:digest) when empty, for air-gapped installs.
+	PostgresImageName   string
+	PostgresImageDigest string
 }
 
 // Render applies external components, then one embedded component, to
@@ -68,6 +75,13 @@ type Values struct {
 // Upstream manifest checks and the plugin component values live in
 // internal/installer/manifests.go.
 func Render(source []byte, v Values) ([]byte, error) {
+	if ref := os.Getenv("SUBSTRATE_AKS_POSTGRES_IMAGE"); ref != "" && v.PostgresImageName == "" {
+		name, digest, ok := strings.Cut(ref, "@")
+		if !ok || !strings.HasPrefix(digest, "sha256:") {
+			return nil, fmt.Errorf("SUBSTRATE_AKS_POSTGRES_IMAGE must be name@sha256:digest, got %q", ref)
+		}
+		v.PostgresImageName, v.PostgresImageDigest = name, digest
+	}
 	fsys := filesys.MakeFsInMemory()
 	if err := fsys.WriteFile("/render/upstream.yaml", source); err != nil {
 		return nil, err
