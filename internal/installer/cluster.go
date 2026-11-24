@@ -197,6 +197,18 @@ func (a App) checkCluster(ctx context.Context) error {
 	return nil
 }
 
+// defaultKVMProbeImage is a public Docker Hub image. Air-gapped installs mirror
+// it into their registry and set SUBSTRATE_AKS_PROBE_IMAGE to the mirrored reference.
+const defaultKVMProbeImage = "python:3.13-alpine@sha256:bf12ecc0bea3f171d55145dd02c78b5eeb09f30ee2ac9cc2b4c9e4e8f5e30741"
+
+func renderKVMProbe() string {
+	image := os.Getenv("SUBSTRATE_AKS_PROBE_IMAGE")
+	if image == "" {
+		return kvmProbe
+	}
+	return strings.Replace(kvmProbe, defaultKVMProbeImage, image, 1)
+}
+
 const kvmProbe = `apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -281,7 +293,7 @@ func (a App) checkKVM(ctx context.Context) (err error) {
 			"--namespace=kube-system", "--ignore-not-found", "--wait=true", "--timeout=45s")
 		err = errors.Join(err, cleanupErr)
 	}()
-	if _, err := a.kubectl(ctx, []byte(kvmProbe), "apply", "-f", "-"); err != nil {
+	if _, err := a.kubectl(ctx, []byte(renderKVMProbe()), "apply", "-f", "-"); err != nil {
 		return err
 	}
 	_, err = a.kubectl(ctx, nil, "rollout", "status", "daemonset/substrate-aks-kvm-probe", "--namespace=kube-system", "--timeout=180s")
