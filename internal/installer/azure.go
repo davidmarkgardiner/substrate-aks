@@ -228,6 +228,15 @@ func (a App) provision(ctx context.Context, whatIf, registryOnly bool) error {
 	} {
 		params[key] = map[string]any{"value": value}
 	}
+	if private := c.AKS.Private; private != nil {
+		for key, value := range map[string]any{
+			"privateNetwork": true, "aksSubnetId": private.AKSSubnetID,
+			"endpointSubnetId":     private.EndpointSubnetID,
+			"blobPrivateDnsZoneId": private.BlobPrivateDNSZoneID, "controlPlaneIdentityId": private.ControlPlaneIdentityID,
+		} {
+			params[key] = map[string]any{"value": value}
+		}
+	}
 	if operator := c.AKS.Operator; operator != nil {
 		params["operatorObjectId"] = map[string]any{"value": operator.ObjectID}
 		params["operatorPrincipalType"] = map[string]any{"value": operator.PrincipalType}

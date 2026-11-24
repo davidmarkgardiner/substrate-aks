@@ -315,7 +315,9 @@ func (u *setupUI) summary(c installer.Config, defaults azureDefaults, path strin
 	u.row("AKS version", c.AKS.KubernetesVersion)
 	u.row("Nodes", fmt.Sprintf("1 system + %d microVM", c.AKS.WorkerPool.Count))
 	u.row("Node size", c.AKS.WorkerPool.VMSize)
-	if c.AKS.AllowUnrestrictedAPI {
+	if c.AKS.Private != nil {
+		u.row("API server access", "Private endpoint only (reachable from the VNet)")
+	} else if c.AKS.AllowUnrestrictedAPI {
 		u.row("API server access", "Anyone on the internet")
 		warnings = append(warnings, unrestrictedAPIWarning)
 	} else {

@@ -1,0 +1,10 @@
+#cloud-config
+package_update: true
+packages: [git, curl, jq, build-essential, ca-certificates, gnupg, lsb-release, unzip]
+runcmd:
+  - curl -sL https://aka.ms/InstallAzureCLIDeb | bash
+  - curl -sL https://go.dev/dl/go1.24.5.linux-amd64.tar.gz | tar -C /usr/local -xzf -
+  - ln -sf /usr/local/go/bin/go /usr/local/bin/go
+  - az aks install-cli --install-location /usr/local/bin/kubectl --kubelogin-install-location /usr/local/bin/kubelogin
+  - curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+  - touch /var/lib/jumpbox-ready

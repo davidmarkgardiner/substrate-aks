@@ -78,6 +78,18 @@ type AKSConfig struct {
 	AllowUnrestrictedAPI bool             `json:"allowUnrestrictedApi,omitempty"`
 	WorkerPool           WorkerPoolConfig `json:"workerPool"`
 	Operator             *OperatorConfig  `json:"operator,omitempty"`
+	// Private places AKS, ACR and Blob behind private endpoints on an existing
+	// VNet (infra/private/network.bicep). The installer must then run from a
+	// host inside that VNet.
+	Private *PrivateNetworkConfig `json:"privateNetwork,omitempty"`
+}
+
+// PrivateNetworkConfig holds the resource IDs of the pre-created network.
+type PrivateNetworkConfig struct {
+	AKSSubnetID            string `json:"aksSubnetId"`
+	EndpointSubnetID       string `json:"endpointSubnetId"`
+	BlobPrivateDNSZoneID   string `json:"blobPrivateDnsZoneId"`
+	ControlPlaneIdentityID string `json:"controlPlaneIdentityId"`
 }
 
 type OperatorConfig struct {
@@ -313,7 +325,21 @@ func (c Config) Validate() error {
 	if pods := c.AKS.WorkerPool.MaxPods; pods != 0 && pods*c.AKS.WorkerPool.Count < MinPoolPods {
 		return fmt.Errorf("aks.workerPool.maxPods times aks.workerPool.count must be at least %d, which AKS requires of every pool", MinPoolPods)
 	}
-	if len(c.AKS.APIAuthorizedCIDRs) == 0 && !c.AKS.AllowUnrestrictedAPI {
+	if p := c.AKS.Private; p != nil {
+		for field, value := range map[string]string{
+			"aks.privateNetwork.aksSubnetId":            p.AKSSubnetID,
+			"aks.privateNetwork.endpointSubnetId":       p.EndpointSubnetID,
+			"aks.privateNetwork.blobPrivateDnsZoneId":   p.BlobPrivateDNSZoneID,
+			"aks.privateNetwork.controlPlaneIdentityId": p.ControlPlaneIdentityID,
+		} {
+			if !strings.HasPrefix(value, "/subscriptions/") {
+				return fmt.Errorf("%s must be an Azure resource ID", field)
+			}
+		}
+		if len(c.AKS.APIAuthorizedCIDRs) > 0 || c.AKS.AllowUnrestrictedAPI {
+			return errors.New("aks.privateNetwork cannot be combined with aks.apiAuthorizedCidrs or aks.allowUnrestrictedApi; the API server is private")
+		}
+	} else if len(c.AKS.APIAuthorizedCIDRs) == 0 && !c.AKS.AllowUnrestrictedAPI {
 		return errors.New("aks.apiAuthorizedCidrs must allow your client/CI IP ranges; only explicit aks.allowUnrestrictedApi=true permits an empty allowlist")
 	}
 	if len(c.AKS.APIAuthorizedCIDRs) > 0 && c.AKS.AllowUnrestrictedAPI {

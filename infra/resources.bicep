@@ -14,6 +14,13 @@ param workerOsDiskSizeGB int = 128
 @maxValue(250)
 param workerMaxPods int = 0
 param apiAuthorizedCidrs array
+@description('Private-network mode: private AKS API, subnet-attached pools, storage reachable only through a private endpoint.')
+param privateNetwork bool = false
+param aksSubnetId string = ''
+param endpointSubnetId string = ''
+param blobPrivateDnsZoneId string = ''
+@description('User-assigned control-plane identity, pre-granted Network Contributor on the VNet. Required with privateNetwork.')
+param controlPlaneIdentityId string = ''
 param assetPublisherObjectId string
 @allowed(['', 'User', 'ServicePrincipal', 'Group'])
 param assetPublisherPrincipalType string = ''
@@ -42,7 +49,12 @@ resource cluster 'Microsoft.ContainerService/managedClusters@2025-05-01' = {
   name: clusterName
   location: location
   tags: tags
-  identity: {
+  identity: privateNetwork ? {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${controlPlaneIdentityId}': {}
+    }
+  } : {
     type: 'SystemAssigned'
   }
   properties: {
@@ -69,7 +81,11 @@ resource cluster 'Microsoft.ContainerService/managedClusters@2025-05-01' = {
       upgradeChannel: 'none'
       nodeOSUpgradeChannel: 'NodeImage'
     }
-    apiServerAccessProfile: {
+    apiServerAccessProfile: privateNetwork ? {
+      enablePrivateCluster: true
+      privateDNSZone: 'system'
+      enablePrivateClusterPublicFQDN: false
+    } : {
       authorizedIPRanges: apiAuthorizedCidrs
     }
     networkProfile: {
@@ -102,6 +118,7 @@ resource cluster 'Microsoft.ContainerService/managedClusters@2025-05-01' = {
         osDiskType: 'Managed'
         osDiskSizeGB: 128
         type: 'VirtualMachineScaleSets'
+        ...(privateNetwork ? { vnetSubnetID: aksSubnetId } : {})
       }
       union({
         name: 'microvm'
@@ -117,6 +134,7 @@ resource cluster 'Microsoft.ContainerService/managedClusters@2025-05-01' = {
         nodeLabels: {
           'substrate-aks/runtime': 'microvm'
         }
+        ...(privateNetwork ? { vnetSubnetID: aksSubnetId } : {})
       }, workerMaxPods == 0 ? {} : { maxPods: workerMaxPods })
     ]
   }
@@ -155,6 +173,48 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
     allowSharedKeyAccess: false
     supportsHttpsTrafficOnly: true
     minimumTlsVersion: 'TLS1_2'
+    publicNetworkAccess: privateNetwork ? 'Disabled' : 'Enabled'
+    ...(privateNetwork ? {
+      networkAcls: {
+        defaultAction: 'Deny'
+        bypass: 'AzureServices'
+      }
+    } : {})
+  }
+}
+
+resource blobEndpoint 'Microsoft.Network/privateEndpoints@2024-05-01' = if (privateNetwork) {
+  name: '${storage.name}-blob-pe'
+  location: location
+  tags: tags
+  properties: {
+    subnet: {
+      id: endpointSubnetId
+    }
+    privateLinkServiceConnections: [
+      {
+        name: 'blob'
+        properties: {
+          privateLinkServiceId: storage.id
+          groupIds: ['blob']
+        }
+      }
+    ]
+  }
+}
+
+resource blobEndpointDns 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2024-05-01' = if (privateNetwork) {
+  parent: blobEndpoint
+  name: 'default'
+  properties: {
+    privateDnsZoneConfigs: [
+      {
+        name: 'blob'
+        properties: {
+          privateDnsZoneId: blobPrivateDnsZoneId
+        }
+      }
+    ]
   }
 }
 

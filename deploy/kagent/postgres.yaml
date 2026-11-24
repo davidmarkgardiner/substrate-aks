@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: kagent-pg}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: kagent-pg}}
+  template:
+    metadata: {labels: {app: kagent-pg}}
+    spec:
+      containers:
+      - name: pg
+        image: postgres:17-alpine
+        env:
+        - {name: POSTGRES_DB, value: kagent}
+        - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+        - name: POSTGRES_PASSWORD
+          valueFrom: {secretKeyRef: {name: kagent-pg-admin, key: password}}
+        ports: [{containerPort: 5432}]
+        readinessProbe: {exec: {command: [pg_isready, -U, postgres]}, periodSeconds: 3}
+        volumeMounts: [{name: d, mountPath: /var/lib/postgresql/data}]
+      volumes: [{name: d, emptyDir: {}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: kagent-pg}
+spec: {selector: {app: kagent-pg}, ports: [{port: 5432}]}

@@ -32,6 +32,12 @@ param operatorObjectId string = ''
 @allowed(['User', 'ServicePrincipal', 'Group'])
 param operatorPrincipalType string = 'User'
 param registryOnly bool = false
+@description('Private-network mode (see resources.bicep). Needs the VNet, subnets and private DNS zones from infra/private/network.bicep.')
+param privateNetwork bool = false
+param aksSubnetId string = ''
+param endpointSubnetId string = ''
+param blobPrivateDnsZoneId string = ''
+param controlPlaneIdentityId string = ''
 
 resource group 'Microsoft.Resources/resourceGroups@2024-03-01' = {
   name: resourceGroupName
@@ -73,6 +79,11 @@ module resources 'resources.bicep' = if (!registryOnly) {
     operatorObjectId: operatorObjectId
     operatorPrincipalType: operatorPrincipalType
     registryName: registry.outputs.registryName
+    privateNetwork: privateNetwork
+    aksSubnetId: aksSubnetId
+    endpointSubnetId: endpointSubnetId
+    blobPrivateDnsZoneId: blobPrivateDnsZoneId
+    controlPlaneIdentityId: controlPlaneIdentityId
   }
 }
 
