@@ -24,7 +24,7 @@ Steps 1 and 2 are the target for now. Step 3 comes after, once Substrate itself 
 | Two managed identities | One federated to `ate-system/atelet`, one to `ate-system/ate-api-server`, with Blob Data roles |
 | Images | Everything in `import-list.csv` (full public path, version, digest) mirrored into the trusted registry, **digests preserved**. Two Docker Hub tags (`postgres:18-alpine`, `python:3.13-alpine`) have moved since we pinned them: import those **by digest** |
 | Two images we build | `azure-blob` plugin and `counter` (built with ko in a connected stage; they are not published upstream) |
-| Source | Internal git copies of the Substrate and plugin repos (fetch-by-SHA must work) |
+| Source | (see `SOURCE-AND-ASSETS.md`) Internal git copies of the Substrate and plugin repos (fetch-by-SHA must work) |
 | Files | The four microVM runtime files (checksums are pinned); kagent charts and SQL |
 | Install host | Inside the cluster's network, with the CLI tools the preflight lists and the `substrate-aks` binary built from branch `private-aks` |
 

@@ -59,3 +59,5 @@ David says to go.**
 5. Report every error verbatim. Do not retry destructive steps.
 
 Full background, image digests and known caveats: `docs/AIRGAP-BUILD-HANDOFF.md`.
+
+Blocked on "cannot reach GitHub"? See `SOURCE-AND-ASSETS.md`.
