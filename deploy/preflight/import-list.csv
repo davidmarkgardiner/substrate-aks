@@ -16,6 +16,6 @@ docker.io/library/postgres,17-alpine,sha256:f9cf3e1f0066f0eb0c48707d864f0ac5941e
 ghcr.io/kagent-dev/kagent/controller,1.0.1,sha256:5d1c898971de419384144894c5406faaf88bcb34fdfd7698d071e9a757136318,y,digest resolved 2026-11-25
 ghcr.io/kagent-dev/kagent/ui,1.0.1,sha256:ce5c3a9a05d1292afa3d94c3aaf1547feac4389fe4181840acb8d54179da6128,y,digest resolved 2026-11-25
 ghcr.io/kagent-dev/kagent/tools,0.3.0,sha256:cb89eb76216195a90cac73846b447525b6e6e33e45154d1ded9621bf11340315,y,digest resolved 2026-11-25
-ghcr.io/kagent-dev/kagent/golang-adk,(digest only),sha256:d3b1151d39c529a6f921a58a995ff699963012001d2e5075f69bf613abebc24d,y,no tag known; import by digest
-ghcr.io/kagent-dev/kagent/claude-harness,(digest only),sha256:111d28bc8552469b028d91ecd2352c9d44811aba07be12b1e6868db7948f904e,n,no tag known; import by digest
-ghcr.io/kagent-dev/kagent/codex-harness,(digest only),sha256:6885f229b4ee70c9babf37f89ef5d93438eab049875e5bc129799fef6e4cfd19,n,no tag known; import by digest
+ghcr.io/kagent-dev/kagent/golang-adk,1.0.1,sha256:d3b1151d39c529a6f921a58a995ff699963012001d2e5075f69bf613abebc24d,y,"tag 1.0.1 verified to equal this digest; the chart references it by digest, so keep the digest"
+ghcr.io/kagent-dev/kagent/claude-harness,1.0.1,sha256:111d28bc8552469b028d91ecd2352c9d44811aba07be12b1e6868db7948f904e,n,"tag 1.0.1 verified to equal this digest; the chart references it by digest, so keep the digest"
+ghcr.io/kagent-dev/kagent/codex-harness,1.0.1,sha256:6885f229b4ee70c9babf37f89ef5d93438eab049875e5bc129799fef6e4cfd19,n,"tag 1.0.1 verified to equal this digest; the chart references it by digest, so keep the digest"
