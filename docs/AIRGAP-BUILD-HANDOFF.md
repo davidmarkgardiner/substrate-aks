@@ -23,7 +23,7 @@ Items marked **(code review)** come from a read-only review of the repo, not fro
 Copy in a way that **preserves digests** (`skopeo copy --all`, `crane copy`, or `az acr import`). Re-pushing changes the digest and breaks the `@sha256` references.
 
 ### Substrate v1.0.0 release images
-Source: `ghcr.io/agent-substrate/substrate/<name>:v1.0.0`. Target: `<registry>/substrate/<name>:v1.0.0`.
+Source: `ghcr.io/agent-substrate/substrate/<name>:v1.0.0`. Target: `<registry>/agent-substrate/substrate/<name>:v1.0.0`.
 
 | Image | Digest (v1.0.0) |
 |---|---|
@@ -44,8 +44,8 @@ The installer passes `--sandbox-classes gvisor` on every ate-system install, so 
 ### Images built in a connected stage (not published upstream)
 | Image | Built from | Notes |
 |---|---|---|
-| `substrate/plugins/objectstore/azure-blob:v1.0.0` | `agent-substrate-plugins/objectstore-azure-blob` at commit `5639af04ad429cf51d2dbf452c80709d3b68e48b`, built with ko | Required. Needs the public Go proxy to build. Record the digest; it changes per build. |
-| `substrate/counter:v1.0.0` | `demos/counter` in the Substrate source, built with ko | **Required for kagent.** `install-kagent.sh` takes `workerImage` from the demo's `counter-microvm` WorkerPool and exits if there is none, so the `demo` step must run. Alternative: pass `--set substrateWorkerPool.workerImage=<registry>/substrate/ateworker-microvm:v1.0.0` and edit the script. |
+| `agent-substrate/substrate/plugins/objectstore/azure-blob:v1.0.0` | `agent-substrate-plugins/objectstore-azure-blob` at commit `5639af04ad429cf51d2dbf452c80709d3b68e48b`, built with ko | Required. Needs the public Go proxy to build. Record the digest; it changes per build. |
+| `agent-substrate/substrate/counter:v1.0.0` | `demos/counter` in the Substrate source, built with ko | **Required for kagent.** `install-kagent.sh` takes `workerImage` from the demo's `counter-microvm` WorkerPool and exits if there is none, so the `demo` step must run. Alternative: pass `--set substrateWorkerPool.workerImage=<registry>/agent-substrate/substrate/ateworker-microvm:v1.0.0` and edit the script. |
 
 ### Third-party images
 | Image | Used by |
@@ -116,8 +116,8 @@ The stock installer only works on clusters it created. This branch adds an `exis
   "existing": {"storageAccount": "<account>", "nodeClientId": "<uuid>",
                "controlClientId": "<uuid>", "tenantId": "<uuid>"},
   "substrate": {
-    "images": {"repository": "<registry>/substrate", "tag": "v1.0.0",
-               "plugin": "<registry>/substrate/plugins/objectstore/azure-blob@sha256:<recorded>"},
+    "images": {"repository": "<registry>/agent-substrate/substrate", "tag": "v1.0.0",
+               "plugin": "<registry>/agent-substrate/substrate/plugins/objectstore/azure-blob@sha256:<recorded>"},
     "runtime": {"assetsDir": "/abs/path/to/microvm-assets"}
   }
 }

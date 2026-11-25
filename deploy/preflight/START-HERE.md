@@ -22,7 +22,7 @@ Steps 1 and 2 are the target for now. Step 3 comes after, once Substrate itself 
 | Cluster | AKS 1.37, OIDC issuer + workload identity on, a microVM node pool (label `substrate-aks/runtime=microvm`, taint `ate.dev/sandboxClass=microvm:NoSchedule`, `_v6/_v7` VM size) |
 | Blob backend | A storage account with containers `snapshots` and `assets` |
 | Two managed identities | One federated to `ate-system/atelet`, one to `ate-system/ate-api-server`, with Blob Data roles |
-| Images | Everything in `images.list` mirrored into the trusted registry, **digests preserved** |
+| Images | Everything in `import-list.csv` (full public path, version, digest) mirrored into the trusted registry, **digests preserved**. Two Docker Hub tags (`postgres:18-alpine`, `python:3.13-alpine`) have moved since we pinned them: import those **by digest** |
 | Two images we build | `azure-blob` plugin and `counter` (built with ko in a connected stage; they are not published upstream) |
 | Source | Internal git copies of the Substrate and plugin repos (fetch-by-SHA must work) |
 | Files | The four microVM runtime files (checksums are pinned); kagent charts and SQL |

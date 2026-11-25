@@ -303,8 +303,8 @@ cfg = {
           "workerPool": {"vmSize": e.get("CL_VMSIZE", ""), "count": int(e.get("CL_WORKERS") or 0)}},
   "existing": {"storageAccount": e.get("CL_STORAGE", ""), "nodeClientId": e.get("CL_NODE_CID", ""),
                "controlClientId": e.get("CL_CONTROL_CID", ""), "tenantId": e.get("CL_TENANT", "")},
-  "substrate": {"images": {"repository": (e.get("REGISTRY", "") + "/substrate"), "tag": "v1.0.0",
-                           "plugin": (e.get("REGISTRY", "") + "/substrate/plugins/objectstore/azure-blob@" + e.get("CL_PLUGIN_DIGEST", ""))},
+  "substrate": {"images": {"repository": (e.get("REGISTRY", "") + "/agent-substrate/substrate"), "tag": "v1.0.0",
+                           "plugin": (e.get("REGISTRY", "") + "/agent-substrate/substrate/plugins/objectstore/azure-blob@" + e.get("CL_PLUGIN_DIGEST", ""))},
                 "runtime": {"assetsDir": e.get("ASSETS_DIR", "")}},
 }
 json.dump(cfg, open(os.path.join(out, "installation.draft.json"), "w"), indent=2)
