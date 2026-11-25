@@ -1,6 +1,6 @@
 # Air-gapped install handoff: ate-system + kagent
 
-Scope: **install onto an existing cluster** (adopt mode, section 3). Cluster build, registry choice, privileges and network/egress are handled elsewhere and are out of scope here.
+Hand this to the work agent via `deploy/preflight/` (README, read-only `preflight.sh`, image list). Scope: **install onto an existing cluster** (adopt mode, section 3). Cluster build, registry choice, privileges and network/egress are handled elsewhere and are out of scope here.
 
 Proven on 2026-11-24 (branch `private-aks`): Substrate v1.0.0 (microVM) and kagent v1.0.1 on a private AKS 1.37 cluster with outbound Internet denied. A kagent agent answered a GLM-5 call over A2A, and a counter actor kept its state across suspend and resume. Evidence: `docs/evidence/private-airgap-2026-11-24.md`.
 
