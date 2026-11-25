@@ -1,30 +1,29 @@
-# Air-gapped private build: handoff
+# Air-gapped install handoff: ate-system + kagent
 
-Branch `private-aks` of this fork. Proven on 2026-11-24: Substrate v1.0.0 (microVM) and kagent v1.0.1 on a private AKS 1.37 cluster with outbound Internet denied by NSG. A kagent agent answered a GLM-5 call over A2A, and a counter actor kept its state across suspend and resume. Evidence: `docs/evidence/private-airgap-2026-11-24.md`.
+Scope: **install onto an existing cluster.** Cluster build, registry choice, privileges and network/egress are handled elsewhere and are out of scope here.
 
-Everything below is what the build needs staged **before** it runs, so nothing is pulled from the Internet during the install.
+Proven on 2026-11-24 (branch `private-aks`): Substrate v1.0.0 (microVM) and kagent v1.0.1 on a private AKS 1.37 cluster with outbound Internet denied. A kagent agent answered a GLM-5 call over A2A, and a counter actor kept its state across suspend and resume. Evidence: `docs/evidence/private-airgap-2026-11-24.md`.
 
-## 0. Sort these first (checklist)
+Items marked **(code review)** come from a read-only review of the repo, not from a run.
 
-| # | Item | Status in PoC | What you must provide |
-|---|---|---|---|
-| 1 | **Postgres** (Substrate state) | Bundled StatefulSet, image from Docker Hub; override env var did not work, patched by hand | Mirror `postgres:18-alpine` and repoint the StatefulSet, or supply a managed Postgres. |
-| 1b | **Postgres** (kagent) | Separate `postgres:17-alpine` in-cluster | Same: mirrored image or managed Postgres, plus the owner and readwrite secrets and `setup.sql`. |
-| 2 | **Azure Blob backend** (snapshots) | Storage account with public access disabled and a Blob private endpoint, `privatelink.blob.core.windows.net` zone linked to the VNet | Storage account, private endpoint, DNS zone, and the `azure-blob` plugin image built in a connected stage. |
-| 3 | **OIDC** | AKS OIDC issuer enabled. ate-api validates ServiceAccount tokens against the public issuer, so one egress rule was allowed | Either allow `<region>.oic.prod-aks.azure.com` (443) or a design that serves the issuer JWKS internally. Open item, untested. |
-| 4 | **Git server** | **Not done.** Used a local bare mirror on the jumpbox via git `insteadOf` | Internal git hosting `agent-substrate/substrate` (tag `v1.0.0`) and the plugin repo, serving fetch-by-SHA. |
-| 5 | **Privileges** | PoC jumpbox identity had Owner on the subscription | Owner, or Contributor plus Role Based Access Control Administrator, on the subscription or RG at install time. Network Contributor for the AKS control-plane identity on the VNet. Entra object ID for cluster admin. |
-| 6 | **Image registry** | Out of scope here, handled by your own air-gap process | All images in section 1 mirrored with digests. |
-| 7 | **Egress** | NSG deny-Internet plus the allow-list in section 4 | Same, from your firewall. |
+## 0. Sort these first
 
-Sections 1 to 4 give the detail for each row.
+| # | Item | What the install needs |
+|---|---|---|
+| 1 | **Postgres, Substrate** | Substrate bundles a Postgres StatefulSet that pulls `postgres:18-alpine` from Docker Hub. Mirror the image and set `SUBSTRATE_AKS_POSTGRES_IMAGE=<registry>/...postgres@sha256:<digest>` (digest form required) **before the first `install`**. If the source was already cached, delete `<installation dir>/source-*-v2` after setting it **(code review)**. In the PoC the override did not take effect and I patched the StatefulSet by hand; a re-run of `install` reverts a hand patch. Or use a managed Postgres. |
+| 2 | **Postgres, kagent** | Needs a Postgres, the owner and readwrite secrets, and `setup.sql`. The PoC used an in-cluster `postgres:17-alpine` on `emptyDir` (data lost on pod restart; if it restarts, delete the two secrets and rerun the script). `install-kagent.sh` hard-codes `$REGISTRY/library/postgres:17-alpine`, so mirror that image too or edit the script. For anything beyond a PoC use a managed Postgres or a PVC. |
+| 3 | **Azure Blob backend** | A storage account and blob containers `snapshots` and `assets`, reachable from the cluster, with the node and control identities holding Storage Blob Data Contributor on `snapshots` and Reader on `assets`. The `azure-blob` plugin image must be built in a connected stage and mirrored. |
+| 4 | **OIDC** | ate-api validates ServiceAccount tokens against the AKS OIDC issuer. In the PoC the public issuer endpoint (`<region>.oic.prod-aks.azure.com`, 443) was allowed as an IP rule. Either keep that reachable or serve the JWKS internally. The internal option is **untested**. |
+| 5 | **Git server** | **Not done.** The PoC used a local bare mirror on the jumpbox with git `insteadOf`. Need an internal git host with the Substrate repo (tag `v1.0.0`) and the plugin repo, serving fetch-by-SHA. |
+| 6 | **Images** | Mirrored to the trusted registry with digests preserved (section 1). |
+| 7 | **Install inputs** | Skip the `images` step and set the `substrate.images.*` values by hand (section 3). |
 
 ## 1. Container images to mirror
 
-Mirror each image into the internal registry under the target path shown. The installer and the kagent chart both resolve images by that repository path.
+Copy in a way that **preserves digests** (`skopeo copy --all`, `crane copy`, or `az acr import`). Re-pushing changes the digest and breaks the `@sha256` references.
 
 ### Substrate v1.0.0 release images
-Source: `ghcr.io/agent-substrate/substrate/<name>:v1.0.0`. Target: `<registry>/substrate/<name>:v1.0.0`. Keep the digest.
+Source: `ghcr.io/agent-substrate/substrate/<name>:v1.0.0`. Target: `<registry>/substrate/<name>:v1.0.0`.
 
 | Image | Digest (v1.0.0) |
 |---|---|
@@ -40,35 +39,40 @@ Source: `ghcr.io/agent-substrate/substrate/<name>:v1.0.0`. Target: `<registry>/s
 | objectstore-plugin | sha256:485cf92b31fed761c53f478d17ed69bf552a2cd8e8cf3b24b98a3e06789ee274 |
 | ateworker-gvisor | sha256:f8987236c6256f58c4b2625e543b43f4ae4bdded6ee6821c03d966effb7c0f17 |
 
-`objectstore-plugin` and `ateworker-gvisor` were imported by the installer but not seen running on the microVM-only build. Mirror them anyway, since the installer imports the full set and I did not test an install without them.
+The installer passes `--sandbox-classes gvisor` on every ate-system install, so `ateworker-gvisor` is needed by design **(code review)**.
 
-### Images the installer builds (not published upstream)
+### Images built in a connected stage (not published upstream)
 | Image | Built from | Notes |
 |---|---|---|
-| `substrate/plugins/objectstore/azure-blob:v1.0.0` | `agent-substrate-plugins/objectstore-azure-blob` at commit `5639af04ad429cf51d2dbf452c80709d3b68e48b`, built with ko | Required. The installer builds it with Go modules from the public proxy, so build it in a connected stage and push it. Its digest changes per build; record it. |
-| `substrate/counter:v1.0.0` | `demos/counter` in the Substrate source | Only for the counter demo. Skip it, or build it the same way. |
+| `substrate/plugins/objectstore/azure-blob:v1.0.0` | `agent-substrate-plugins/objectstore-azure-blob` at commit `5639af04ad429cf51d2dbf452c80709d3b68e48b`, built with ko | Required. Needs the public Go proxy to build. Record the digest; it changes per build. |
+| `substrate/counter:v1.0.0` | `demos/counter` in the Substrate source, built with ko | **Required for kagent.** `install-kagent.sh` takes `workerImage` from the demo's `counter-microvm` WorkerPool and exits if there is none, so the `demo` step must run. Alternative: pass `--set substrateWorkerPool.workerImage=<registry>/substrate/ateworker-microvm:v1.0.0` and edit the script. |
 
 ### Third-party images
 | Image | Used by |
 |---|---|
-| `postgres:18-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15` | Substrate's bundled Postgres (hard-coded upstream) |
-| `python:3.13-alpine@sha256:bf12ecc0bea3f171d55145dd02c78b5eeb09f30ee2ac9cc2b4c9e4e8f5e30741` | The installer's KVM probe. Set `SUBSTRATE_AKS_PROBE_IMAGE` to the mirrored reference. |
+| `postgres:18-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15` | Substrate's bundled Postgres |
+| `postgres:17-alpine` | kagent Postgres in `deploy/kagent/postgres.yaml` and `install-kagent.sh` (path `library/postgres:17-alpine`) |
+| `python:3.13-alpine@sha256:bf12ecc0bea3f171d55145dd02c78b5eeb09f30ee2ac9cc2b4c9e4e8f5e30741` | Installer KVM probe. Set `SUBSTRATE_AKS_PROBE_IMAGE` to the mirrored reference. |
 
 ### kagent v1.0.1
-Source `ghcr.io/kagent-dev/kagent/...`. Target `<registry>/kagent-dev/kagent/...`, because the chart's `global.imageRegistry` swaps only the host.
+Source `ghcr.io/kagent-dev/kagent/...`, target `<registry>/kagent-dev/kagent/...` (the chart's `global.imageRegistry` swaps only the host).
 
 | Image | Reference |
 |---|---|
 | controller | `controller:1.0.1` |
 | ui | `ui:1.0.1` |
 | tools | `tools:0.3.0` |
-| golang-adk (the agent runtime) | `golang-adk@sha256:d3b1151d39c529a6f921a58a995ff699963012001d2e5075f69bf613abebc24d` |
-| claude-harness | `claude-harness@sha256:111d28bc8552469b028d91ecd2352c9d44811aba07be12b1e6868db7948f904e` (only if the Claude harness is used) |
-| codex-harness | `codex-harness@sha256:6885f229b4ee70c9babf37f89ef5d93438eab049875e5bc129799fef6e4cfd19` (only if the Codex harness is used) |
+| golang-adk (agent runtime) | `golang-adk@sha256:d3b1151d39c529a6f921a58a995ff699963012001d2e5075f69bf613abebc24d` |
+| claude-harness | `claude-harness@sha256:111d28bc8552469b028d91ecd2352c9d44811aba07be12b1e6868db7948f904e` (only if used) |
+| codex-harness | `codex-harness@sha256:6885f229b4ee70c9babf37f89ef5d93438eab049875e5bc129799fef6e4cfd19` (only if used) |
 
-kagent v1.0.1 also needs a PostgreSQL. The PoC ran `postgres:17-alpine`; reusing the `postgres:18-alpine` image above, or a managed Postgres, avoids one more image.
+**Authoritative lists:** this table is hand-maintained. For kagent, `deploy/kagent/seed-kagent-airgap.sh` derives `images.txt` from `helm template`, but its grep matches only `ghcr.io`, `docker.io` and `cr.kagent.dev` **(code review)**, so check the output. For Substrate, capture the real set from a working cluster:
 
-AKS system images come from MCR and are not listed here. The node pools need the egress in section 4.
+```
+kubectl get pods -A -o jsonpath='{range .items[*]}{range .spec.initContainers[*]}{.image}{"\n"}{end}{range .spec.containers[*]}{.image}{"\n"}{end}{end}' | sort -u
+```
+
+**Registry caveat (code review):** the atelet credential provider (`deploy/components/actor-images/credential-provider.yaml`) only matches `*.azurecr.io`. Actor and worker image pulls from a non-ACR registry would need that provider config changed. Confirm before choosing the trusted registry.
 
 ## 2. Other artifacts to stage
 
@@ -76,56 +80,50 @@ AKS system images come from MCR and are not listed here. The node pools need the
 |---|---|
 | Substrate source | Tag `v1.0.0`, commit `b34fbee742906494b5eb4f1f36987176bf8770a4` (`github.com/agent-substrate/substrate`). |
 | Azure Blob plugin source | Commit `5639af04ad429cf51d2dbf452c80709d3b68e48b` (`github.com/agent-substrate-plugins/objectstore-azure-blob`). |
-| Git mirrors | The installer runs `git fetch --depth=1 <github url> <tag or sha>` on every install. Host both repos on an internal git server and rewrite the URLs: `git config --global url."<internal>".insteadOf "https://github.com/agent-substrate/substrate.git"` (and the plugin URL). The mirror must serve the tag and fetch-by-SHA (`uploadpack.allowAnySHA1InWant`). |
-| MicroVM runtime assets | A directory with `cloud-hypervisor`, `virtiofsd`, `vmlinux`, `rootfs.img` for amd64. Set `substrate.runtime.assetsDir` to it. Built from Kata 4.3.1 static and Cloud Hypervisor v53.0 (`ate-setup publish microvm-assets` downloads them from GitHub). SHA-256 must match the pinned SandboxConfig: cloud-hypervisor `448af3d4e59b22c2987f7df94c213ad40fb53a10d437e42b5ee6c4fce7c29ecc`, virtiofsd `15b2e72a78cc08a9bd8a6943e89fb69c88cb3cbeb63069efceade835342ac7d4`, vmlinux `f87d8359035cb7557b16a319e6431ea09b183e62268aef436bf8dc6530d786b6`, rootfs.img `6770db2cca5710593f27c9ac5e1d9d7aab836422695a5e5c4807496a92a0f24d`. |
-| kagent charts | `kagent-crds-1.0.1.tgz`, `kagent-1.0.1.tgz` (from `oci://ghcr.io/kagent-dev/kagent/helm/`), installed from local files. `deploy/kagent/seed-kagent-airgap.sh` pulls them. |
+| Git mirrors | The installer runs `git fetch --depth=1 <github url> <tag or sha>` on every install. Host both repos internally and rewrite: `git config --global url."<internal>".insteadOf "https://github.com/agent-substrate/substrate.git"` (and the plugin URL). Must serve the tag and fetch-by-SHA (`uploadpack.allowAnySHA1InWant`). Delete the cached `source-*` directory if mirrors change. |
+| MicroVM runtime assets | A directory with `cloud-hypervisor`, `virtiofsd`, `vmlinux`, `rootfs.img` (amd64). Set `substrate.runtime.assetsDir`. Built from Kata 4.3.1 static and Cloud Hypervisor v53.0 (`ate-setup publish microvm-assets` downloads them from GitHub). SHA-256 must match the pinned SandboxConfig: cloud-hypervisor `448af3d4e59b22c2987f7df94c213ad40fb53a10d437e42b5ee6c4fce7c29ecc`, virtiofsd `15b2e72a78cc08a9bd8a6943e89fb69c88cb3cbeb63069efceade835342ac7d4`, vmlinux `f87d8359035cb7557b16a319e6431ea09b183e62268aef436bf8dc6530d786b6`, rootfs.img `6770db2cca5710593f27c9ac5e1d9d7aab836422695a5e5c4807496a92a0f24d`. `install` uploads them to the Blob `assets` container (`az storage blob upload --auth-mode login`), so the install host's identity must be allowed to write there and must resolve the blob endpoint **(code review)**. |
+| kagent charts | `kagent-crds-1.0.1.tgz`, `kagent-1.0.1.tgz` from `oci://ghcr.io/kagent-dev/kagent/helm/`, installed from local files. `seed-kagent-airgap.sh` pulls them. |
 | kagent DB setup SQL | `go/core/pkg/postgressetup/setup.sql` from kagent tag `v1.0.1`. |
 | Installer binary | Build `bin/substrate-aks` from this branch in a connected stage. Its own Go dependencies are not vendored. |
-| Go toolchain | The jumpbox had Go 1.24.5 and the build fetched Go 1.27.3 on demand (the installer's stated requirement), so pre-seed that toolchain in the Go module cache. With it cached, the install ran with `GOPROXY=off`, because Substrate ships a `vendor/` directory. |
-| Bicep | `az bicep install` downloads from GitHub. Install it ahead of time. |
+| Go toolchain | Go 1.27.3 (the installer's stated requirement; `install` runs `go run ./cmd/ate-setup`). Pre-seed it in the Go module cache. With it cached, the install ran with `GOPROXY=off`, because Substrate ships a `vendor/` directory. |
+| Install host tools | `az`, `kubectl` 1.37, `kubelogin`, `helm` 3, `git`, `python3`, `curl`, `openssl`, Bicep installed ahead of time. |
 
-To skip the installer's connected `images` step, set `substrate.images.*` and `substrate.runtime.assetsDir` in `installation.json` to your own published images and assets (see `docs/configuration.md`).
+## 3. Installer inputs (skip the `images` step)
 
-## 3. Azure prerequisites
+`install` requires `substrate.images.repository`, `tag` and `plugin` (as `image@sha256`). The `images` step normally fills them but needs the Internet (ghcr, GitHub, ko builds), so **do not run it**. Edit `installation.json`:
 
-- AKS 1.37 in the region, with x86 D, E or F `_v6` or `_v7` VM sizes that support nested virtualization (the microVM pool needs `/dev/kvm`). Use one CPU generation for the pool; memory snapshots only restore on a matching CPU model.
-- vCPU quota for one system node and one microVM node (8 vCPU for two `Standard_D4s_v6`).
-- A VNet with subnets for AKS and for private endpoints, and a `privatelink.blob.core.windows.net` zone linked to it. `infra/private/network.bicep` builds the PoC version.
-- A user-assigned AKS control-plane identity with Network Contributor on the VNet.
-- A builder host inside the VNet: `az`, `kubectl` 1.37, `kubelogin`, `helm` 3, `git`, `python3`, `curl`, `openssl`. A private API cannot be reached from a workstation.
-- Install-time rights: Owner, or Contributor plus a role-assignment admin, on the subscription. The PoC gave the jumpbox identity Owner; use something narrower.
-- An Entra operator object ID for cluster admin.
+- `substrate.images.repository` = `<registry>/substrate`
+- `substrate.images.tag` = `v1.0.0`
+- `substrate.images.plugin` = `<registry>/substrate/plugins/objectstore/azure-blob@sha256:<recorded digest>`
+- `substrate.runtime.assetsDir` = absolute path to the assets directory
 
-## 4. Outbound allow-list (443), everything else denied
+See `docs/configuration.md` for the field reference **(code review: `aks.privateNetwork` is not documented there)**.
 
-AzureActiveDirectory, AzureResourceManager, MicrosoftContainerRegistry, AzureFrontDoor.FirstParty, your registry's region tag (AzureContainerRegistry), Storage for the region (or only the private endpoint), the **AKS OIDC issuer** (`<region>.oic.prod-aks.azure.com`), and the model endpoint if an LLM is used. `infra/private/lockdown.bicep` is the PoC NSG.
+Then: `substrate-aks install`, then `demo` (required, see section 1), then `deploy/kagent/install-kagent.sh`.
 
-## 5. What had to be fixed to make kagent work
+## 4. What had to be fixed to make kagent work
 
 | Symptom | Fix |
 |---|---|
 | Controller waits for secrets `kagent-postgres-owner` and `kagent-postgres-readwrite` | Provide Postgres and create the secrets (`deploy/kagent/postgres.yaml`, `setup.sql`). |
-| Controller crashes: `dial ate-api ... deadline exceeded` | Label the `kagent` namespace `ate.dev/api-access=true` (the ate-api NetworkPolicy allows only labelled namespaces). |
+| Controller crashes: `dial ate-api ... deadline exceeded` | Label the `kagent` namespace `ate.dev/api-access=true`. |
 | `PermissionDenied ... lacks can_get on actor_template` | Add `spiffe://cluster.local/ns/kagent/sa/kagent-controller` to ate-api `--authz-bootstrap-owners`. |
 | `ActorTemplateRejected (InvalidArgument)` with no detail | Run ate-api with `--preview=ALL`. `PerTemplateSnapshotLocation,GoldenEgressPolicy` alone were not enough; the third gate is not identified. |
 | `SendMessage` returns `KAGENT_SEND_NOT_ACCEPTED` forever | Add the kagent SPIFFE ID to the router's `--ingress-allowed-spiffe-ids`. |
-| `403 Forbidden egress denied` for the LLM host | Create an `EgressPolicy` for the host, and add `policies: [{atespace: kagent, allowedNamespaces: [kagent]}]` to the `k8s-credential-provider-namespace-policy` ConfigMap so the egress gateway can read the key Secret. |
+| `403 Forbidden egress denied` for the LLM host | Create an `EgressPolicy` for the host, and add `policies: [{atespace: kagent, allowedNamespaces: [kagent]}]` to the `k8s-credential-provider-namespace-policy` ConfigMap. |
 | Chart default snapshot location | Set `harnesses.snapshotLocation=azblob://snapshots/kagent/`. |
 | Client | Retry `SendMessage` with the same `messageId`; a new ID starts a new session. Use `POST /agents/<ns>/<name>` with `A2A-Version: 1.0`. |
 
-`deploy/kagent/install-kagent.sh` applies all of these (set `AIRGAP_REGISTRY` and `ASSETS_DIR` for the air-gapped mode).
+`deploy/kagent/install-kagent.sh` applies all of these. Notes:
+- It is **GLM-specific**: it needs `GLM_API_KEY` and creates an Anthropic-provider ModelConfig and an EgressPolicy for `api.z.ai`. Adapt it for the work LLM endpoint.
+- Set `AIRGAP_REGISTRY` **and** `ASSETS_DIR` together. With only the registry set, charts are still pulled from ghcr and `global.imageRegistry` is not set **(code review)**.
+- It replaces the whole `namespace-policy.yaml` key, wiping any existing policies **(code review)**.
+- The ate-api args, router args and credential-provider ConfigMap are live patches. **Re-running `substrate-aks install` reverts them**, so reapply the script afterwards.
 
-## 6. Public dependencies the lockdown exposed
+## 5. Open items and caveats
 
-1. The installer fetches Substrate and plugin source from GitHub on every install. Fixed with the git URL rewrite; also delete the cached `source-*` directory if you change the mirrors.
-2. The KVM probe image came from Docker Hub. Fixed with `SUBSTRATE_AKS_PROBE_IMAGE`.
-3. Bundled Postgres came from Docker Hub. **The `SUBSTRATE_AKS_POSTGRES_IMAGE` override in this branch did not take effect in the run.** The PoC repointed the StatefulSet by hand (`kubectl patch sts postgres`). Do that, or fix the override, before relying on it.
-4. ate-api validates ServiceAccount tokens against the public AKS OIDC issuer. One endpoint was allowed. A fully closed network needs another answer.
-
-## 7. Run order
-
-1. Connected stage: mirror images (section 1), build the plugin image and installer binary, assemble the microVM assets, fetch charts and SQL, create the git mirrors.
-2. Create the network, private DNS zone and builder host (`infra/private/network.bicep`), then apply the egress lockdown.
-3. On the builder host: `substrate-aks init`, add `aks.privateNetwork` to `installation.json`, then `provision`, `install`, `demo`.
-4. Run `deploy/kagent/install-kagent.sh`.
-5. Replace the PoC shortcuts: `--preview=ALL` and the bootstrap-owner entry.
+1. **`--preview=ALL` and the bootstrap-owner entry** are PoC shortcuts. No method is given to replace them yet. Identify the third preview gate.
+2. **OIDC issuer** is still a public dependency (row 4 above).
+3. **Not tested:** installing without `objectstore-plugin` and `ateworker-gvisor`, a real internal git server, Entra-only cluster access (the PoC used local admin kubeconfig), and the OIDC-internal option.
+4. **Open question:** whether kagent with `harnesses.enabled=true` pre-creates ActorTemplates that make the Claude and Codex harness images required.
+5. **Open question:** whether `ate-setup install` pulls any gVisor or `runsc` asset from the Internet. It worked in the PoC, but only with an allow-all-443 rule whose contents were not recorded.
