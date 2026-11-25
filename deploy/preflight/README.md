@@ -1,5 +1,7 @@
 # Work-agent bundle: prerequisite check, then install
 
+Humans: read `START-HERE.md` first. Agents: the paste-in prompt is `AGENT-PROMPT.md`.
+
 Goal: install **ate-system (Substrate v1.0.0, microVM)** onto an **existing private AKS cluster**
 with no public dependencies, using the fork's adopt mode (`existing` block in `installation.json`).
 This bundle is stage 1: find the gaps. **Do not run the installer until the gaps are closed and
