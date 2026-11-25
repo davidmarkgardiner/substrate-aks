@@ -10,8 +10,8 @@ Items marked **(code review)** come from a read-only review of the repo, not fro
 
 | # | Item | What the install needs |
 |---|---|---|
-| 1 | **Postgres, Substrate** | Substrate bundles a Postgres StatefulSet that pulls `postgres:18-alpine` from Docker Hub. Mirror the image and set `SUBSTRATE_AKS_POSTGRES_IMAGE=<registry>/...postgres@sha256:<digest>` (digest form required) **before the first `install`**. If the source was already cached, delete `<installation dir>/source-*-v2` after setting it **(code review)**. In the PoC the override did not take effect and I patched the StatefulSet by hand; a re-run of `install` reverts a hand patch. Or use a managed Postgres. |
-| 2 | **Postgres, kagent** | Needs a Postgres, the owner and readwrite secrets, and `setup.sql`. The PoC used an in-cluster `postgres:17-alpine` on `emptyDir` (data lost on pod restart; if it restarts, delete the two secrets and rerun the script). `install-kagent.sh` hard-codes `$REGISTRY/library/postgres:17-alpine`, so mirror that image too or edit the script. For anything beyond a PoC use a managed Postgres or a PVC. |
+| 1 | **Postgres, Substrate** | Substrate bundles a Postgres StatefulSet that pulls `postgres:18-alpine` from Docker Hub. Mirror the image and export `SUBSTRATE_AKS_POSTGRES_IMAGE=<registry>/...postgres@sha256:<digest>` (digest form required) before `install`. **Fixed on this branch:** the variable now selects its own source-cache directory, so a checkout cached before it was set is no longer reused. The fix builds and passes the unit tests but was **not re-run on a cluster**; verify with `kubectl -n ate-system get sts postgres -o jsonpath='{..image}'`. Or use a managed Postgres. |
+| 2 | **Postgres, kagent** | Needs a Postgres, the owner and readwrite secrets, and `setup.sql`. The PoC used an in-cluster `postgres:17-alpine` on `emptyDir` (data lost on pod restart; if it restarts, delete the two secrets and rerun the script). The script uses `$AIRGAP_REGISTRY/library/postgres:17-alpine`; set `KAGENT_PG_IMAGE=<full image ref>` to use another (for example the mirrored 18-alpine). For anything beyond a PoC use a managed Postgres or a PVC. |
 | 3 | **Azure Blob backend** | A storage account and blob containers `snapshots` and `assets`, reachable from the cluster, with the node and control identities holding Storage Blob Data Contributor on `snapshots` and Reader on `assets`. The `azure-blob` plugin image must be built in a connected stage and mirrored. |
 | 4 | **OIDC** | ate-api validates ServiceAccount tokens against the AKS OIDC issuer. In the PoC the public issuer endpoint (`<region>.oic.prod-aks.azure.com`, 443) was allowed as an IP rule. Either keep that reachable or serve the JWKS internally. The internal option is **untested**. |
 | 5 | **Git server** | **Not done.** The PoC used a local bare mirror on the jumpbox with git `insteadOf`. Need an internal git host with the Substrate repo (tag `v1.0.0`) and the plugin repo, serving fetch-by-SHA. |
@@ -66,7 +66,7 @@ Source `ghcr.io/kagent-dev/kagent/...`, target `<registry>/kagent-dev/kagent/...
 | claude-harness | `claude-harness@sha256:111d28bc8552469b028d91ecd2352c9d44811aba07be12b1e6868db7948f904e` (only if used) |
 | codex-harness | `codex-harness@sha256:6885f229b4ee70c9babf37f89ef5d93438eab049875e5bc129799fef6e4cfd19` (only if used) |
 
-**Authoritative lists:** this table is hand-maintained. For kagent, `deploy/kagent/seed-kagent-airgap.sh` derives `images.txt` from `helm template`, but its grep matches only `ghcr.io`, `docker.io` and `cr.kagent.dev` **(code review)**, so check the output. For Substrate, capture the real set from a working cluster:
+**Authoritative lists:** this table is hand-maintained. For kagent, `deploy/kagent/seed-kagent-airgap.sh` derives `images.txt` from `helm template`, but its grep now also matches `quay.io` and `registry.k8s.io`; still check the output. For Substrate, capture the real set from a working cluster:
 
 ```
 kubectl get pods -A -o jsonpath='{range .items[*]}{range .spec.initContainers[*]}{.image}{"\n"}{end}{range .spec.containers[*]}{.image}{"\n"}{end}{end}' | sort -u
@@ -116,8 +116,9 @@ Then: `substrate-aks install`, then `demo` (required, see section 1), then `depl
 
 `deploy/kagent/install-kagent.sh` applies all of these. Notes:
 - It is **GLM-specific**: it needs `GLM_API_KEY` and creates an Anthropic-provider ModelConfig and an EgressPolicy for `api.z.ai`. Adapt it for the work LLM endpoint.
-- Set `AIRGAP_REGISTRY` **and** `ASSETS_DIR` together. With only the registry set, charts are still pulled from ghcr and `global.imageRegistry` is not set **(code review)**.
-- It replaces the whole `namespace-policy.yaml` key, wiping any existing policies **(code review)**.
+- `AIRGAP_REGISTRY` and `ASSETS_DIR` must be set together; the script now exits if only one is set.
+- The credential-provider namespace policy is now **merged** into the existing ConfigMap instead of replaced (merge logic checked on sample inputs, not on a cluster).
+- `KAGENT_PG_IMAGE` overrides kagent's Postgres image.
 - The ate-api args, router args and credential-provider ConfigMap are live patches. **Re-running `substrate-aks install` reverts them**, so reapply the script afterwards.
 
 ## 5. Open items and caveats

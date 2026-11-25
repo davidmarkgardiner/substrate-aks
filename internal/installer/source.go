@@ -52,7 +52,14 @@ func (a App) prepare(ctx context.Context, i Infrastructure) (string, error) {
 	}
 	fp := fingerprint(a.Config, i)
 	// Demo-only adaptations invalidate the cache without changing the installed fingerprint.
-	dest := filepath.Join(a.Config.workspace(), "source-"+fp+"-v2")
+	// The Postgres image override is baked into the adapted source, so it must
+	// select its own cache directory; otherwise a checkout prepared before the
+	// variable was set would keep the original image reference.
+	cacheName := "source-" + fp + "-v2"
+	if ref := os.Getenv("SUBSTRATE_AKS_POSTGRES_IMAGE"); ref != "" {
+		cacheName += "-pg" + checksum([]byte(ref))[:8]
+	}
+	dest := filepath.Join(a.Config.workspace(), cacheName)
 	markerPath := filepath.Join(dest, ".substrate-aks-prepared.json")
 	if data, err := os.ReadFile(markerPath); err == nil {
 		a.progress("Verifying the cached managed source checkout")

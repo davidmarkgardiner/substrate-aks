@@ -12,8 +12,7 @@ curl -fsSL "https://raw.githubusercontent.com/kagent-dev/kagent/v$V/go/core/pkg/
 # Every image the chart (and its subcharts and built-in harnesses) can start.
 helm template kagent "$OUT/kagent-$V.tgz" -n kagent --set providers.openAI.apiKey=x \
   --set substrateWorkerPool.create=true --set harnesses.enabled=true --set substrateWorkerPool.workerImage=x \
-  | grep -oE '(ghcr\.io|docker\.io|cr\.kagent\.dev)/[A-Za-z0-9._/-]+(:[A-Za-z0-9._-]+)?(@sha256:[a-f0-9]{64})?' | sort -u > "$OUT/images.txt"
-echo "library/postgres:17-alpine" >> "$OUT/images.txt.extra"
+  | grep -oE '(ghcr\.io|docker\.io|quay\.io|registry\.k8s\.io|cr\.kagent\.dev)/[A-Za-z0-9._/-]+(:[A-Za-z0-9._-]+)?(@sha256:[a-f0-9]{64})?' | sort -u > "$OUT/images.txt"
 while read -r img; do
   repo="${img#*/}"; repo="${repo%%[:@]*}"
   tag=$(printf '%s' "$img" | grep -oE ':[A-Za-z0-9._-]+($|@)' | head -1 | tr -d ':@' || true)

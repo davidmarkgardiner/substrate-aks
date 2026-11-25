@@ -22,7 +22,13 @@ AGENT="${AGENT_NAME:-substrate-hello}"
 # fetched from the Internet. Mirror images with seed-kagent-airgap.sh first.
 REGISTRY="${AIRGAP_REGISTRY:-}"
 ASSETS_DIR="${ASSETS_DIR:-}"
+PG_IMAGE_OVERRIDE="${KAGENT_PG_IMAGE:-}"   # full image reference for kagent's Postgres
 : "${GLM_API_KEY:?set GLM_API_KEY}"
+# Air-gap mode needs both: the registry swaps image hosts, the assets dir holds
+# the charts and setup.sql. With only one set, charts would still come from ghcr.
+if [ -n "$REGISTRY" ] || [ -n "$ASSETS_DIR" ]; then
+  [ -n "$REGISTRY" ] && [ -n "$ASSETS_DIR" ] || { echo "set both AIRGAP_REGISTRY and ASSETS_DIR (or neither)" >&2; exit 1; }
+fi
 
 log() { printf '\n==> %s\n' "$*"; }
 need() { command -v "$1" >/dev/null || { echo "missing $1" >&2; exit 1; }; }
@@ -53,8 +59,25 @@ arg_set atenet-router '--ingress-allowed-spiffe-ids=' \
   "--ingress-allowed-spiffe-ids=spiffe://cluster.local/ns/ate-system/sa/atenet-client,$KAGENT_SPIFFE"
 
 log "Substrate: allow atespace $NS to resolve Secrets in namespace $NS (egress credential injection)"
-kubectl -n ate-system patch cm k8s-credential-provider-namespace-policy --type=merge \
-  -p "{\"data\":{\"namespace-policy.yaml\":\"policies:\\n- atespace: $NS\\n  allowedNamespaces:\\n  - $NS\\n\"}}"
+# Merge into the existing policy instead of replacing it, so other atespaces keep access.
+python3 - "$NS" <<'PY'
+import json, subprocess, sys
+ns = sys.argv[1]
+cm = json.loads(subprocess.check_output(
+    ["kubectl", "-n", "ate-system", "get", "cm", "k8s-credential-provider-namespace-policy", "-o", "json"]))
+key = "namespace-policy.yaml"
+cur = cm.get("data", {}).get(key, "") or ""
+if any(l.strip() == f"- atespace: {ns}" for l in cur.splitlines()):
+    sys.exit(0)  # already present
+if not cur.strip() or cur.strip() == "policies: []":
+    cur = "policies:\n"
+elif not cur.endswith("\n"):
+    cur += "\n"
+cur += f"- atespace: {ns}\n  allowedNamespaces:\n  - {ns}\n"
+patch = json.dumps({"data": {key: cur}})
+subprocess.check_call(["kubectl", "-n", "ate-system", "patch", "cm",
+                       "k8s-credential-provider-namespace-policy", "--type=merge", "-p", patch])
+PY
 kubectl -n ate-system rollout restart deploy/k8s-credential-provider
 kubectl -n ate-system rollout status deploy/k8s-credential-provider --timeout=180s
 
@@ -68,6 +91,7 @@ if ! kubectl -n "$NS" get secret kagent-postgres-owner >/dev/null 2>&1; then
   kubectl -n "$NS" create secret generic kagent-pg-admin --from-literal=password="$PW_ADMIN" \
     --dry-run=client -o yaml | kubectl apply -f -
   PG_IMAGE="postgres:17-alpine"; [ -n "$REGISTRY" ] && PG_IMAGE="$REGISTRY/library/postgres:17-alpine"
+  [ -n "$PG_IMAGE_OVERRIDE" ] && PG_IMAGE="$PG_IMAGE_OVERRIDE"
   sed "s#image: postgres:17-alpine#image: $PG_IMAGE#" "$(dirname "$0")/postgres.yaml" | kubectl apply -n "$NS" -f -
   kubectl -n "$NS" rollout status deploy/kagent-pg --timeout=300s
   if [ -n "$ASSETS_DIR" ]; then cp "$ASSETS_DIR/kagent-setup.sql" /tmp/kagent-setup.sql
