@@ -4,6 +4,21 @@ Branch `private-aks` of this fork. Proven on 2026-11-24: Substrate v1.0.0 (micro
 
 Everything below is what the build needs staged **before** it runs, so nothing is pulled from the Internet during the install.
 
+## 0. Sort these first (checklist)
+
+| # | Item | Status in PoC | What you must provide |
+|---|---|---|---|
+| 1 | **Postgres** (Substrate state) | Bundled StatefulSet, image from Docker Hub; override env var did not work, patched by hand | Mirror `postgres:18-alpine` and repoint the StatefulSet, or supply a managed Postgres. |
+| 1b | **Postgres** (kagent) | Separate `postgres:17-alpine` in-cluster | Same: mirrored image or managed Postgres, plus the owner and readwrite secrets and `setup.sql`. |
+| 2 | **Azure Blob backend** (snapshots) | Storage account with public access disabled and a Blob private endpoint, `privatelink.blob.core.windows.net` zone linked to the VNet | Storage account, private endpoint, DNS zone, and the `azure-blob` plugin image built in a connected stage. |
+| 3 | **OIDC** | AKS OIDC issuer enabled. ate-api validates ServiceAccount tokens against the public issuer, so one egress rule was allowed | Either allow `<region>.oic.prod-aks.azure.com` (443) or a design that serves the issuer JWKS internally. Open item, untested. |
+| 4 | **Git server** | **Not done.** Used a local bare mirror on the jumpbox via git `insteadOf` | Internal git hosting `agent-substrate/substrate` (tag `v1.0.0`) and the plugin repo, serving fetch-by-SHA. |
+| 5 | **Privileges** | PoC jumpbox identity had Owner on the subscription | Owner, or Contributor plus Role Based Access Control Administrator, on the subscription or RG at install time. Network Contributor for the AKS control-plane identity on the VNet. Entra object ID for cluster admin. |
+| 6 | **Image registry** | Out of scope here, handled by your own air-gap process | All images in section 1 mirrored with digests. |
+| 7 | **Egress** | NSG deny-Internet plus the allow-list in section 4 | Same, from your firewall. |
+
+Sections 1 to 4 give the detail for each row.
+
 ## 1. Container images to mirror
 
 Mirror each image into the internal registry under the target path shown. The installer and the kagent chart both resolve images by that repository path.
