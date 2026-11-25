@@ -304,6 +304,10 @@ func (a App) showPlan(data []byte) error {
 }
 
 func (a App) infrastructure(ctx context.Context) (Infrastructure, error) {
+	if a.Config.Existing != nil {
+		a.progress("Using the existing infrastructure from installation.json")
+		return a.Config.existingInfrastructure(), nil
+	}
 	if err := a.ownedGroup(ctx, true); err != nil {
 		return Infrastructure{}, err
 	}

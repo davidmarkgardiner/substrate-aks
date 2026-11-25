@@ -1,6 +1,6 @@
 # Air-gapped install handoff: ate-system + kagent
 
-Scope: **install onto an existing cluster.** Cluster build, registry choice, privileges and network/egress are handled elsewhere and are out of scope here.
+Scope: **install onto an existing cluster** (adopt mode, section 3). Cluster build, registry choice, privileges and network/egress are handled elsewhere and are out of scope here.
 
 Proven on 2026-11-24 (branch `private-aks`): Substrate v1.0.0 (microVM) and kagent v1.0.1 on a private AKS 1.37 cluster with outbound Internet denied. A kagent agent answered a GLM-5 call over A2A, and a counter actor kept its state across suspend and resume. Evidence: `docs/evidence/private-airgap-2026-11-24.md`.
 
@@ -88,18 +88,46 @@ kubectl get pods -A -o jsonpath='{range .items[*]}{range .spec.initContainers[*]
 | Go toolchain | Go 1.27.3 (the installer's stated requirement; `install` runs `go run ./cmd/ate-setup`). Pre-seed it in the Go module cache. With it cached, the install ran with `GOPROXY=off`, because Substrate ships a `vendor/` directory. |
 | Install host tools | `az`, `kubectl` 1.37, `kubelogin`, `helm` 3, `git`, `python3`, `curl`, `openssl`, Bicep installed ahead of time. |
 
-## 3. Installer inputs (skip the `images` step)
+## 3. Install onto an existing cluster (adopt mode)
 
-`install` requires `substrate.images.repository`, `tag` and `plugin` (as `image@sha256`). The `images` step normally fills them but needs the Internet (ghcr, GitHub, ko builds), so **do not run it**. Edit `installation.json`:
+The stock installer only works on clusters it created. This branch adds an `existing` block to `installation.json`: the installer then reads its infrastructure from there, skips its Bicep-deployment lookup and resource-group ownership checks, skips its ACR login, and does not require `aks.apiAuthorizedCidrs`. Unit-tested only; **not yet run against a real cluster.**
 
-- `substrate.images.repository` = `<registry>/substrate`
-- `substrate.images.tag` = `v1.0.0`
-- `substrate.images.plugin` = `<registry>/substrate/plugins/objectstore/azure-blob@sha256:<recorded digest>`
-- `substrate.runtime.assetsDir` = absolute path to the assets directory
+### Before you run it, the cluster side must already have
+- AKS 1.37 with the **OIDC issuer and workload identity enabled**.
+- A **microVM node pool**: label `substrate-aks/runtime=microvm`, taint `ate.dev/sandboxClass=microvm:NoSchedule`, node count equal to `aks.workerPool.count`, a `_v6`/`_v7` size with nested virtualisation, amd64 Linux, kubelet 1.37.
+- A **storage account** with containers `snapshots` and `assets`, reachable from the cluster.
+- Two **user-assigned managed identities** with federated credentials (issuer = the cluster's OIDC issuer URL, audience `api://AzureADTokenExchange`):
+  - node identity, subject `system:serviceaccount:ate-system:atelet`: Storage Blob Data Contributor on `snapshots`, Reader on `assets`.
+  - control identity, subject `system:serviceaccount:ate-system:ate-api-server`: Storage Blob Data Contributor on `snapshots`.
+- The install identity (`azure.assetPublisherObjectId`) needs Storage Blob Data Contributor on `assets`.
+- Images pullable by the nodes and by Substrate's atelet (see the registry caveat in section 1).
 
-See `docs/configuration.md` for the field reference **(code review: `aks.privateNetwork` is not documented there)**.
+### Steps
+1. `kubectl`/`az` working against the cluster (`az aks get-credentials` as you do today). The installer runs `az aks get-credentials` itself, so `az login` must be done on the install host.
+2. `substrate-aks init` to write `installation.json`, then edit it. Cluster and resource-group names must match `^[a-z][a-z0-9-]{1,38}[a-z0-9]$`.
+3. Set these (values are examples):
 
-Then: `substrate-aks install`, then `demo` (required, see section 1), then `deploy/kagent/install-kagent.sh`.
+```json
+{
+  "azure": {"subscriptionId": "<sub>", "location": "uksouth", "resourceGroup": "<existing-rg>",
+            "assetPublisherObjectId": "<object id of the install identity>"},
+  "aks": {"clusterName": "<existing-cluster>", "kubernetesVersion": "1.37",
+          "workerPool": {"vmSize": "Standard_D4s_v6", "count": 1}},
+  "existing": {"storageAccount": "<account>", "nodeClientId": "<uuid>",
+               "controlClientId": "<uuid>", "tenantId": "<uuid>"},
+  "substrate": {
+    "images": {"repository": "<registry>/substrate", "tag": "v1.0.0",
+               "plugin": "<registry>/substrate/plugins/objectstore/azure-blob@sha256:<recorded>"},
+    "runtime": {"assetsDir": "/abs/path/to/microvm-assets"}
+  }
+}
+```
+   Leave `installation.ownership` at its default. Do **not** run `provision` or `images`.
+4. Export `SUBSTRATE_AKS_POSTGRES_IMAGE`, `SUBSTRATE_AKS_PROBE_IMAGE` and the git `insteadOf` rewrites (sections 0 and 2).
+5. `substrate-aks check`, then `substrate-aks install`, then `substrate-aks demo` (required for kagent).
+6. `deploy/kagent/install-kagent.sh`.
+
+Everything else from section 2 (Go toolchain, source mirrors, assets) still applies.
 
 ## 4. What had to be fixed to make kagent work
 

@@ -184,7 +184,7 @@ func (a App) upstream(ctx context.Context, root string, args ...string) error {
 		"NO_DEV_ENV=1", "KUBECONFIG=" + a.kubeconfig(), "VERSION=" + c.Substrate.Images.Tag,
 	}
 	host, _, _ := strings.Cut(c.Substrate.Images.Repository, "/")
-	if strings.HasSuffix(host, ".azurecr.io") {
+	if strings.HasSuffix(host, ".azurecr.io") && c.Existing == nil {
 		r, err := a.registry(ctx)
 		if err != nil {
 			return err

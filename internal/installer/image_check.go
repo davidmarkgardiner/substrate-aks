@@ -74,7 +74,7 @@ func (a App) CheckImages(ctx context.Context) error {
 			host, _, _ := strings.Cut(image, "/")
 			azureRegistry = azureRegistry || strings.HasSuffix(host, ".azurecr.io")
 		}
-		if !azureRegistry {
+		if !azureRegistry || a.Config.Existing != nil {
 			return nil
 		}
 		r, err := a.registry(ctx)

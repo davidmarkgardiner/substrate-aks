@@ -39,6 +39,36 @@ type Config struct {
 	Azure        AzureConfig        `json:"azure"`
 	AKS          AKSConfig          `json:"aks"`
 	Substrate    SubstrateConfig    `json:"substrate"`
+	// Existing installs onto a cluster and storage that already exist. The
+	// installer then reads its infrastructure from here instead of from its own
+	// Bicep deployment, and skips resource-group ownership checks.
+	Existing *ExistingConfig `json:"existing,omitempty"`
+}
+
+// ExistingConfig describes pre-built infrastructure, in the shape the installer
+// otherwise reads from its Bicep deployment outputs. Prerequisites: AKS 1.37
+// with the OIDC issuer and workload identity enabled; a microVM node pool
+// labelled substrate-aks/runtime=microvm and tainted
+// ate.dev/sandboxClass=microvm:NoSchedule; a storage account with containers
+// "snapshots" and "assets"; a node identity federated to
+// system:serviceaccount:ate-system:atelet and a control identity federated to
+// system:serviceaccount:ate-system:ate-api-server (issuer: the cluster OIDC
+// issuer, audience api://AzureADTokenExchange).
+type ExistingConfig struct {
+	StorageAccount  string `json:"storageAccount"`
+	NodeClientID    string `json:"nodeClientId"`
+	ControlClientID string `json:"controlClientId"`
+	TenantID        string `json:"tenantId"`
+}
+
+func (c Config) existingInfrastructure() Infrastructure {
+	e := c.Existing
+	return Infrastructure{
+		ClusterName: c.AKS.ClusterName, ResourceGroup: c.Azure.ResourceGroup,
+		StorageAccount: e.StorageAccount, AccountURL: "https://" + e.StorageAccount + ".blob.core.windows.net",
+		SnapshotsContainer: "snapshots", AssetsContainer: "assets",
+		NodeClientID: e.NodeClientID, ControlClientID: e.ControlClientID, TenantID: e.TenantID,
+	}
 }
 
 type InstallationConfig struct {
@@ -290,7 +320,7 @@ func (c Config) Validate() error {
 	if err := ValidateInstallationName(c.Installation.Name); err != nil {
 		return fmt.Errorf("installation.name %w", err)
 	}
-	if c.Installation.Ownership.ResourceGroup != OwnershipCreated || c.Installation.Ownership.Cluster != OwnershipCreated {
+	if c.Existing == nil && (c.Installation.Ownership.ResourceGroup != OwnershipCreated || c.Installation.Ownership.Cluster != OwnershipCreated) {
 		return errors.New(`installation.ownership must be "created" for both resourceGroup and cluster; existing resource groups and clusters are not supported yet`)
 	}
 	for _, name := range []string{c.Azure.ResourceGroup, c.AKS.ClusterName} {
@@ -339,7 +369,7 @@ func (c Config) Validate() error {
 		if len(c.AKS.APIAuthorizedCIDRs) > 0 || c.AKS.AllowUnrestrictedAPI {
 			return errors.New("aks.privateNetwork cannot be combined with aks.apiAuthorizedCidrs or aks.allowUnrestrictedApi; the API server is private")
 		}
-	} else if len(c.AKS.APIAuthorizedCIDRs) == 0 && !c.AKS.AllowUnrestrictedAPI {
+	} else if c.Existing == nil && len(c.AKS.APIAuthorizedCIDRs) == 0 && !c.AKS.AllowUnrestrictedAPI {
 		return errors.New("aks.apiAuthorizedCidrs must allow your client/CI IP ranges; only explicit aks.allowUnrestrictedApi=true permits an empty allowlist")
 	}
 	if len(c.AKS.APIAuthorizedCIDRs) > 0 && c.AKS.AllowUnrestrictedAPI {
@@ -349,6 +379,18 @@ func (c Config) Validate() error {
 		prefix, err := netip.ParsePrefix(value)
 		if err != nil || !prefix.Addr().Is4() || prefix.Bits() == 0 {
 			return fmt.Errorf("invalid or unrestricted AKS API IPv4 CIDR %q", value)
+		}
+	}
+	if e := c.Existing; e != nil {
+		if !regexpStorageAccount(e.StorageAccount) {
+			return errors.New("existing.storageAccount must be a 3-24 character lowercase alphanumeric storage account name")
+		}
+		for field, value := range map[string]string{
+			"existing.nodeClientId": e.NodeClientID, "existing.controlClientId": e.ControlClientID, "existing.tenantId": e.TenantID,
+		} {
+			if !uuidPattern.MatchString(value) {
+				return fmt.Errorf("%s must be a UUID", field)
+			}
 		}
 	}
 	if !uuidPattern.MatchString(c.Azure.AssetPublisherObjectID) {
