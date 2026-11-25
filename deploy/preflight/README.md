@@ -61,3 +61,5 @@ David says to go.**
 Full background, image digests and known caveats: `docs/AIRGAP-BUILD-HANDOFF.md`.
 
 Blocked on "cannot reach GitHub"? See `SOURCE-AND-ASSETS.md`.
+
+Artifact download URLs for the Nexus import forms: `DOWNLOADS.md`.
